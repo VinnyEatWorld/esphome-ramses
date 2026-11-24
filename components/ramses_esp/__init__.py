@@ -39,8 +39,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_SCK_PIN): pins.gpio_output_pin_schema,
         cv.Required(CONF_MOSI_PIN): pins.gpio_output_pin_schema,
         cv.Required(CONF_MISO_PIN): pins.gpio_input_pin_schema,
-        cv.Required(CONF_GDO0_PIN): pins.gpio_input_pin_schema,
-        cv.Optional(CONF_GDO2_PIN): pins.gpio_output_pin_schema,
+        cv.Required(CONF_GDO0_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_GDO2_PIN): pins.gpio_input_pin_schema,
         cv.Optional(CONF_UART_NUM, default=1): cv.int_range(min=0, max=2),
         cv.Optional(CONF_PORT, default=6638): cv.port,
         cv.Optional(CONF_ON_MESSAGE): automation.validate_automation(
