@@ -93,7 +93,8 @@ bool CC1101Driver::init(CC1101SPITransport *transport) {
 }
 
 void CC1101Driver::spi_reset() {
-  this->transport_->cc1101_deselect();
+  // SPIDevice::disable() releases a transaction lock, so do not deselect
+  // before this component has acquired the SPI bus with select().
   delayMicroseconds(1);
   this->transport_->cc1101_select();
   delayMicroseconds(10);
