@@ -886,6 +886,25 @@ void RamsesDiscoveryComponent::on_message(
       uint16_t opcode = ((uint16_t)msg.opcode[0] << 8) | msg.opcode[1];
       dst_dev.seen_opcodes.insert(opcode);
 
+      // A ventilation unit's unicast status/device-info reply identifies the
+      // addressed class-32/37 endpoint as a remote. Do not override an endpoint
+      // already identified by its own sensor telemetry (e.g. CO2 opcode 1298).
+      if (msg.type == ramses_esp::RAMSES_MSG_RP &&
+          (opcode == 0x31D9 || opcode == 0x31DA || opcode == 0x10E0) &&
+          (dst.dev_class == 32 || dst.dev_class == 37) &&
+          dst_dev.device_type != "sensor") {
+        auto responder = ramses_esp::RamsesAddress::from_bytes(msg.addr[0]);
+        auto responder_it = this->devices_.find(responder.to_string());
+        if (responder_it != this->devices_.end() &&
+            responder_it->second.is_hvac) {
+          dst_dev.device_type = "remote";
+          dst_dev.is_hvac = false;
+          dst_dev.associated_target = responder.to_string();
+          ESP_LOGI(TAG, "Identified %s as a remote for HVAC unit %s",
+                   dst.to_string().c_str(), responder.to_string().c_str());
+        }
+      }
+
       // If fan command 22F1/22F3 was sent to target, target is the HVAC unit
       if (opcode == 0x22F1 || opcode == 0x22F3) {
         dst_dev.is_hvac = true;
@@ -1365,6 +1384,9 @@ static bool device_has_entities(const DiscoveredDevice &dev) {
   }
   if (dev.device_type == "opentherm") {
     return true;
+  }
+  if (dev.device_type == "sensor") {
+    return !dev.last_telemetry.empty();
   }
   return false;
 }
