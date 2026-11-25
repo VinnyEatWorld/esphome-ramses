@@ -41,7 +41,7 @@ public:
   bool enter_rx_mode();
   bool enter_tx_mode();
   void fifo_end();
-  uint8_t read_rssi();
+  int8_t read_rssi();
 
   bool apply_ramses_config();
   void apply_custom_tx_config(const CustomTxConfig &cfg);

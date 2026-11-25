@@ -227,10 +227,9 @@ void CC1101Driver::fifo_end() {
   this->write_reg(CC_IOCFG0, 0x05); // Rising edge, TX Fifo empty
 }
 
-uint8_t CC1101Driver::read_rssi() {
+int8_t CC1101Driver::read_rssi() {
   int8_t rssi = static_cast<int8_t>(this->read_reg(CC_RSSI));
-  rssi = rssi / 2 - 74;
-  return static_cast<uint8_t>(-rssi);
+  return static_cast<int8_t>(rssi / 2 - 74);
 }
 
 bool CC1101Driver::apply_ramses_config() {

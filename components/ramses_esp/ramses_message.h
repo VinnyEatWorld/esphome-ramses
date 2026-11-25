@@ -76,7 +76,7 @@ struct RamsesMessage {
   uint8_t len{0};
 
   uint8_t csum{0};
-  uint8_t rssi{0};
+  int8_t rssi{0};
 
   uint8_t n_payload{0};
   uint8_t payload[RAMSES_MAX_PAYLOAD]{0};
@@ -239,7 +239,7 @@ public:
     return *this;
   }
 
-  RamsesMessageBuilder &rssi(uint8_t r) {
+  RamsesMessageBuilder &rssi(int8_t r) {
     msg_.rssi = r;
     msg_.fields |= RAMSES_F_RSSI;
     return *this;
