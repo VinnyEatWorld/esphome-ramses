@@ -48,6 +48,7 @@ public:
 
 protected:
   void spi_reset();
+  bool configure_ramses_profile();
   bool spi_write_bytes(uint8_t *rx_data, const uint8_t *data, size_t len);
   bool spi_read_bytes(uint8_t *rx_data, const uint8_t *tx_data, size_t len);
 

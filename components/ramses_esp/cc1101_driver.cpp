@@ -7,6 +7,8 @@
 
 static const char *TAG = "ramses_esp.cc1101";
 static constexpr uint32_t CC1101_STATE_TIMEOUT_MS = 100;
+static constexpr uint8_t CC1101_MARCSTATE_IDLE = 0x01;
+static constexpr uint8_t CC1101_MARCSTATE_MASK = 0x1F;
 
 #define delayMicroseconds(us) esp_rom_delay_us(us)
 
@@ -76,20 +78,33 @@ bool CC1101Driver::init(CC1101SPITransport *transport) {
   // routing stay under ESPHome; this driver never initializes SPI2 itself.
   this->spi_reset();
   this->strobe(CC_SRES);
-  delayMicroseconds(500);
+
+  const uint32_t reset_started = millis();
+  uint8_t status = this->strobe(CC_SNOP);
+  while ((status & CC_CHIP_RDY) != 0 &&
+         (millis() - reset_started) < CC1101_STATE_TIMEOUT_MS) {
+    delay(1);
+    status = this->strobe(CC_SNOP);
+  }
+  if ((status & CC_CHIP_RDY) != 0) {
+    ESP_LOGE(TAG, "CC1101 CHIP_RDYn timeout after %u ms (status=0x%02X)",
+             static_cast<unsigned>(CC1101_STATE_TIMEOUT_MS), status);
+    return false;
+  }
 
   uint8_t partnum = this->read_reg(CC_PARTNUM);
   uint8_t version = this->read_reg(CC_VERSION);
   ESP_LOGI(TAG, "CC1101 Hardware Check: PartNum=0x%02X, Version=0x%02X",
            partnum, version);
-  if (version == 0x00 || version == 0xFF) {
-    ESP_LOGW(TAG,
-             "WARNING: CC1101 returned invalid version (0x%02X)! Check "
-             "SPI wiring (SCK, MOSI, MISO, CS).",
-             version);
+  if (partnum == 0xFF && version == 0xFF) {
+    ESP_LOGE(TAG, "No CC1101 response (PARTNUM=0x%02X, VERSION=0x%02X)",
+             partnum, version);
+    return false;
   }
 
-  return this->apply_ramses_config();
+  // Configure and verify while idle. The component starts RX only after its
+  // UART/GDO path has been initialized.
+  return this->configure_ramses_profile();
 }
 
 void CC1101Driver::spi_reset() {
@@ -219,6 +234,15 @@ uint8_t CC1101Driver::read_rssi() {
 }
 
 bool CC1101Driver::apply_ramses_config() {
+  if (!this->configure_ramses_profile())
+    return false;
+  if (!this->enter_rx_mode())
+    return false;
+  ESP_LOGI(TAG, "CC1101 configured for RAMSES II RX (868.3 MHz)");
+  return true;
+}
+
+bool CC1101Driver::configure_ramses_profile() {
   if (!this->enter_idle_mode())
     return false;
   for (uint8_t i = 0; i < CC_PARAM_MAX; i++) {
@@ -229,9 +253,53 @@ bool CC1101Driver::apply_ramses_config() {
   for (uint8_t i = 0; i < CC_PA_MAX; i++) {
     this->write_reg(CC_PATABLE, CC_DEFAULT_PA[i]);
   }
-  if (!this->enter_rx_mode())
+
+  struct RegisterCheck {
+    uint8_t address;
+    const char *name;
+  };
+  static const RegisterCheck checks[] = {
+      {CC_IOCFG2, "IOCFG2"},     {CC_IOCFG0, "IOCFG0"},
+      {CC_FIFOTHR, "FIFOTHR"},   {CC_SYNC1, "SYNC1"},
+      {CC_SYNC0, "SYNC0"},       {CC_PKTLEN, "PKTLEN"},
+      {CC_PKTCTRL1, "PKTCTRL1"}, {CC_PKTCTRL0, "PKTCTRL0"},
+      {CC_CHANNR, "CHANNR"},     {CC_FSCTRL1, "FSCTRL1"},
+      {CC_FSCTRL0, "FSCTRL0"},   {CC_FREQ2, "FREQ2"},
+      {CC_FREQ1, "FREQ1"},       {CC_FREQ0, "FREQ0"},
+      {CC_MDMCFG4, "MDMCFG4"},   {CC_MDMCFG3, "MDMCFG3"},
+      {CC_MDMCFG2, "MDMCFG2"},   {CC_MDMCFG1, "MDMCFG1"},
+      {CC_MDMCFG0, "MDMCFG0"},   {CC_DEVIATN, "DEVIATN"},
+      {CC_MCSM1, "MCSM1"},       {CC_MCSM0, "MCSM0"},
+      {CC_FOCCFG, "FOCCFG"},     {CC_BSCFG, "BSCFG"},
+      {CC_AGCCTRL2, "AGCCTRL2"}, {CC_AGCCTRL1, "AGCCTRL1"},
+      {CC_AGCCTRL0, "AGCCTRL0"},
+  };
+
+  for (const auto &check : checks) {
+    uint8_t expected = CC_RAMSES_CFG[check.address];
+    if (check.address == CC_FIFOTHR)
+      expected = (expected & 0xF0) | 11;
+
+    const uint8_t actual = this->read_reg(check.address);
+    if (actual != expected) {
+      ESP_LOGE(TAG,
+               "CC1101 register %s (0x%02X) mismatch: expected 0x%02X, "
+               "read 0x%02X",
+               check.name, check.address, expected, actual);
+      return false;
+    }
+  }
+
+  this->strobe(CC_SIDLE);
+  const uint8_t marcstate = this->read_reg(CC_MARCSTATE) & CC1101_MARCSTATE_MASK;
+  if (marcstate != CC1101_MARCSTATE_IDLE) {
+    ESP_LOGE(TAG,
+             "CC1101 MARCSTATE is not IDLE after initialization: expected "
+             "0x%02X, read 0x%02X",
+             CC1101_MARCSTATE_IDLE, marcstate);
     return false;
-  ESP_LOGI(TAG, "CC1101 configured for RAMSES II RX (868.3 MHz)");
+  }
+  ESP_LOGI(TAG, "CC1101 MARCSTATE=0x%02X (IDLE)", marcstate);
   return true;
 }
 

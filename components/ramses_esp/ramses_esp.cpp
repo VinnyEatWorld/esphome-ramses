@@ -39,6 +39,14 @@ void RamsesESPComponent::setup() {
     return;
   }
 
+  // Start RF reception only after the UART connected to GDO2 is ready.
+  if (!this->cc1101_.enter_rx_mode()) {
+    ESP_LOGE(TAG, "Failed to start CC1101 RX after UART initialization!");
+    this->mark_failed();
+    return;
+  }
+  ESP_LOGI(TAG, "CC1101 RX started after UART initialization");
+
   this->frame_handler_.set_on_message_callback(
       [this](const RamsesMessage &msg) {
         if (this->rx_msg_queue_ != nullptr) {
