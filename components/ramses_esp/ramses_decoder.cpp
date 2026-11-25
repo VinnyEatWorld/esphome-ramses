@@ -1053,6 +1053,24 @@ RamsesMessage DeviceInfoPayload::encode_query(const RamsesAddress &src,
       .payload_packed<DeviceInfoQueryFmt>(0x00);
 }
 
+RamsesMessage DeviceInfoPayload::encode_orcon_dis_info(
+    const RamsesAddress &src, const RamsesAddress &dst, bool is_reply) {
+  // Captured Orcon DIS identity from the upstream Orcon remote/FAN binding
+  // fixture (VMI-15WSJ53, OEM 0x67). Keep this as a known wire-format profile.
+  static constexpr uint8_t payload[] = {
+      0x00, 0x00, 0x01, 0xC8, 0x94, 0x03, 0x01, 0x67, 0xFF, 0xFF,
+      0xFF, 0xFF, 0xFF, 0xFF, 0x1B, 0x08, 0x07, 0xE4, 0x56, 0x4D,
+      0x49, 0x2D, 0x31, 0x35, 0x57, 0x53, 0x4A, 0x35, 0x33, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  RamsesMessageBuilder builder = is_reply ? RamsesMessageBuilder::reply()
+                                          : RamsesMessageBuilder::info();
+  return builder.from(src)
+      .to(dst)
+      .opcode(0x10E0)
+      .payload(payload, sizeof(payload))
+      .build();
+}
+
 // ----------------------------------------------------------------------
 // Opcode 0x3220: OpenTherm Telemetry
 // ramses_rf reference: ramses_rf/payloads/opentherm.py:OpenthermPayload

@@ -382,6 +382,9 @@ struct DeviceInfoPayload {
                                                  size_t len);
   static RamsesMessage encode_query(const RamsesAddress &src,
                                     const RamsesAddress &dst);
+  static RamsesMessage encode_orcon_dis_info(const RamsesAddress &src,
+                                             const RamsesAddress &dst,
+                                             bool is_reply = false);
 };
 
 // ----------------------------------------------------------------------

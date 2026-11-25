@@ -45,6 +45,16 @@ RamsesDiscoveryComponent = ramses_discovery_ns.class_(
 CONF_RAMSES_ESP_ID = "ramses_esp_id"
 CONF_ACTIVE_PROBING = "active_probing"
 CONF_PROBING_INTERVAL = "probing_interval"
+CONF_DEFAULT_HVAC_SCHEME = "default_hvac_scheme"
+HvacScheme = ramses_esp_ns.enum("HvacScheme", is_class=True)
+HVAC_SCHEMES = {
+    "auto": HvacScheme.AUTO,
+    "orcon": HvacScheme.ORCON,
+    "vasco": HvacScheme.VASCO,
+    "itho": HvacScheme.ITHO,
+    "zehnder": HvacScheme.ZEHNDER,
+    "hopper": HvacScheme.HOPPER,
+}
 
 schema_dict = {
     cv.GenerateID(): cv.declare_id(RamsesDiscoveryComponent),
@@ -53,6 +63,9 @@ schema_dict = {
     cv.Optional(
         CONF_PROBING_INTERVAL, default="30s"
     ): cv.positive_time_period_milliseconds,
+    cv.Optional(
+        CONF_DEFAULT_HVAC_SCHEME, default="auto"
+    ): cv.enum(HVAC_SCHEMES, lower=True),
 }
 
 if HAS_WEB_SERVER:
@@ -84,6 +97,7 @@ async def to_code(config):
 
     cg.add(var.set_active_probing(config[CONF_ACTIVE_PROBING]))
     cg.add(var.set_probing_interval(config[CONF_PROBING_INTERVAL]))
+    cg.add(var.set_default_hvac_scheme(config[CONF_DEFAULT_HVAC_SCHEME]))
 
     cg.add_define("USE_SENSOR")
     cg.add_define("ESPHOME_ENTITY_SENSOR_COUNT", 32)

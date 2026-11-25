@@ -53,7 +53,7 @@ CONFIG_SCHEMA = (
                 RamsesFanPairingButton,
             ),
             cv.Optional(
-                CONF_PAIRING_TIMEOUT, default="30s"
+                CONF_PAIRING_TIMEOUT, default="180s"
             ): cv.positive_time_period_milliseconds,
         }
     )

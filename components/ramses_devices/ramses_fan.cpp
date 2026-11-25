@@ -26,10 +26,10 @@ ramses_esp::RamsesAddress RamsesFan::derive_remote_from_chip_id() const {
 #ifdef USE_ESP_IDF
   uint8_t mac[6] = {};
   esp_efuse_mac_get_default(mac);
-  // Lower 22 bits of the 6-byte MAC give a stable per-board unique ID
+  // RAMSES device IDs are 18 bits; use the low 18 MAC bits for a stable ID
   uint32_t chip_id =
       ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
-  chip_id &= 0x3FFFFF;
+  chip_id &= 0x03FFFF;
   // Device class 37 (HVAC display switch / DIS) is the canonical virtual remote
   // class
   return ramses_esp::RamsesAddress{
@@ -181,9 +181,14 @@ void RamsesFan::start_pairing(uint32_t timeout_ms) {
   this->last_offer_time_ = 0;
 
   ESP_LOGI(TAG,
-           "Starting pairing mode (%u s)... Press pair/prog button on your fan "
-           "unit now.",
+           "Virtual remote pairing active for %u s; offers are sent every "
+           "second.",
            (unsigned int)(timeout_ms / 1000));
+  if (this->scheme_ == ramses_esp::HvacScheme::ORCON) {
+    ESP_LOGI(TAG,
+             "For an MVS-15RH, enter learn mode first: disconnect mains for "
+             "5 s, reconnect, then start pairing within its 3-minute window.");
+  }
 }
 
 void RamsesFan::stop_pairing() {
@@ -211,42 +216,102 @@ fan::FanTraits RamsesFan::get_traits() {
 void RamsesFan::handle_message(const ramses_esp::RamsesMessage &msg) {
   uint16_t opcode = ((uint16_t)msg.opcode[0] << 8) | msg.opcode[1];
 
-  // Handle 1FC9 Binding Handshake when pairing is active
-  if (this->pairing_active_ && opcode == 0x1FC9) {
-    if (msg.type == ramses_esp::RAMSES_MSG_W) {
-      ramses_esp::RamsesAddress target =
-          ramses_esp::RamsesAddress::from_bytes(msg.addr[1]);
-      ramses_esp::RamsesAddress sender = this->get_effective_sender_address();
+  // Handle the respondent's 1FC9 Accept only when it targets this remote,
+  // comes from the configured MVS (if supplied), and grants the fan status
+  // bindings observed in real Orcon handshakes.
+  if (this->pairing_active_ && opcode == 0x1FC9 &&
+      msg.type == ramses_esp::RAMSES_MSG_W) {
+    auto binding = ramses_esp::BindingPayload::decode(msg);
+    if (!binding.has_value() || !binding->is_accept) {
+      ESP_LOGW(TAG, "Ignoring malformed 1FC9 Accept during pairing");
+      return;
+    }
 
-      if (target == sender) {
-        ramses_esp::RamsesAddress fan_addr =
-            ramses_esp::RamsesAddress::from_bytes(msg.addr[0]);
-        ESP_LOGI(TAG,
-                 "Received 1FC9 Accept from Fan Unit %s! Confirming pairing...",
-                 fan_addr.to_string().c_str());
+    ramses_esp::RamsesAddress target =
+        ramses_esp::RamsesAddress::from_bytes(msg.addr[1]);
+    ramses_esp::RamsesAddress sender = this->get_effective_sender_address();
+    ramses_esp::RamsesAddress fan_addr =
+        ramses_esp::RamsesAddress::from_bytes(msg.addr[0]);
+    if (target != sender) {
+      ESP_LOGD(TAG, "Ignoring 1FC9 Accept addressed to %s (our remote is %s)",
+               target.to_string().c_str(), sender.to_string().c_str());
+      return;
+    }
+    if (!fan_addr.is_valid ||
+        (this->device_address_.is_valid &&
+         fan_addr != this->device_address_)) {
+      ESP_LOGW(TAG, "Ignoring 1FC9 Accept from unexpected fan %s",
+               fan_addr.to_string().c_str());
+      return;
+    }
 
-        // Discover device address if not pre-configured
-        if (!this->device_address_from_yaml_.is_valid) {
-          this->device_address_ = fan_addr;
-          this->save_device_address();
-        }
-        // Persist the remote address used during this pairing
-        this->save_remote_address();
+    bool accepts_31d9 = false;
+    bool accepts_31da = false;
+    for (const auto &item : binding->bindings) {
+      accepts_31d9 |= item.opcode == 0x31D9;
+      accepts_31da |= item.opcode == 0x31DA;
+    }
+    if (!accepts_31d9 || !accepts_31da) {
+      ESP_LOGW(TAG,
+               "Ignoring 1FC9 Accept from %s: expected 31D9 and 31DA bindings",
+               fan_addr.to_string().c_str());
+      return;
+    }
 
 #ifdef USE_ESP_IDF
-        if (this->parent_ != nullptr) {
-          ramses_esp::RamsesMessage confirm =
-              ramses_esp::BindingPayload::encode_confirm(sender, fan_addr);
-          this->parent_->send_message(confirm);
-        }
-#endif
-        this->stop_pairing();
-        ESP_LOGI(TAG,
-                 "Pairing successfully completed with Fan Unit %s! Addresses "
-                 "persisted to NVS.",
-                 fan_addr.to_string().c_str());
-        return;
+    if (this->parent_ == nullptr) {
+      ESP_LOGE(TAG, "Cannot confirm pairing: RAMSES gateway is unavailable");
+      return;
+    }
+    ramses_esp::RamsesMessage confirm =
+        ramses_esp::BindingPayload::encode_confirm(sender, fan_addr);
+    if (!this->parent_->send_message(confirm)) {
+      ESP_LOGW(TAG, "Could not queue 1FC9 Confirm; keeping pairing active");
+      return;
+    }
+
+    // Persist addresses only after the confirm was accepted by the TX queue.
+    if (!this->device_address_from_yaml_.is_valid) {
+      this->device_address_ = fan_addr;
+      this->save_device_address();
+    }
+    this->save_remote_address();
+
+    // Orcon DIS remotes announce their 10E0 identity after binding. The same
+    // identity is also returned if the FAN explicitly queries the remote.
+    if (this->scheme_ == ramses_esp::HvacScheme::ORCON) {
+      const auto all_devices = ramses_esp::RamsesAddress{
+          .dev_class = 63, .id = 0x03FFFE, .is_valid = true};
+      auto identity = ramses_esp::DeviceInfoPayload::encode_orcon_dis_info(
+          sender, all_devices);
+      if (!this->parent_->send_message(identity)) {
+        ESP_LOGW(TAG, "Could not queue Orcon DIS 10E0 identity announcement");
       }
+    }
+#endif
+    this->stop_pairing();
+    ESP_LOGI(TAG,
+             "Pairing confirmed with Fan Unit %s; remote %s is now bound.",
+             fan_addr.to_string().c_str(), sender.to_string().c_str());
+    return;
+  }
+
+  // Respond to the FAN's 10E0 query as an Orcon DIS virtual remote.
+  if (this->scheme_ == ramses_esp::HvacScheme::ORCON && opcode == 0x10E0 &&
+      msg.type == ramses_esp::RAMSES_MSG_RQ &&
+      (msg.fields & ramses_esp::RAMSES_F_ADDR1)) {
+    auto target = ramses_esp::RamsesAddress::from_bytes(msg.addr[1]);
+    auto sender = this->get_effective_sender_address();
+    if (target == sender && this->parent_ != nullptr) {
+      auto fan_addr = ramses_esp::RamsesAddress::from_bytes(msg.addr[0]);
+      auto identity = ramses_esp::DeviceInfoPayload::encode_orcon_dis_info(
+          sender, fan_addr, true);
+      if (!this->parent_->send_message(identity)) {
+        ESP_LOGW(TAG, "Could not queue response to FAN 10E0 query");
+      } else {
+        ESP_LOGD(TAG, "Answered 10E0 query from %s", fan_addr.to_string().c_str());
+      }
+      return;
     }
   }
 
@@ -261,18 +326,30 @@ void RamsesFan::handle_message(const ramses_esp::RamsesMessage &msg) {
     if (dec.has_value()) {
       this->set_preset_mode_(
           ramses_esp::fan_preset_to_string(dec->preset_mode));
-      this->state = (dec->preset_mode != ramses_esp::FanPresetMode::OFF &&
-                     dec->preset_mode != ramses_esp::FanPresetMode::AWAY);
+      this->state = dec->preset_mode != ramses_esp::FanPresetMode::OFF;
       this->speed = dec->speed_percent;
       this->publish_state();
     }
   } else if (!from_device) {
     return;
+  } else if (opcode == 0x31D9) {
+    // The MVS reports its confirmed mode in 31D9. Use the configured vendor
+    // mapping (Orcon for MVS-15RH) so Home Assistant reflects actual feedback.
+    auto dec = ramses_esp::HvacFanInfoPayload::decode(
+        msg.payload, msg.n_payload, this->scheme_);
+    if (dec.has_value() &&
+        dec->preset_mode != ramses_esp::FanPresetMode::UNKNOWN) {
+      this->set_preset_mode_(
+          ramses_esp::fan_preset_to_string(dec->preset_mode));
+      this->state = dec->preset_mode != ramses_esp::FanPresetMode::OFF;
+      if (dec->fan_speed_percent.has_value())
+        this->speed = static_cast<int>(*dec->fan_speed_percent);
+      this->publish_state();
+    }
   } else if (opcode == 0x31DA) {
     // 31DA reports motor feedback / actual airflow (not commanded preset).
-    // Do not update the fan entity state from it — state comes from 22F1 only.
-    // Sensor-level values (temperatures, bypass %, etc.) are handled by
-    // RamsesSensor entities that share this same subscription.
+    // Keep the selected preset from the 31D9 status frame; detailed telemetry
+    // is published by RamsesSensor entities sharing this subscription.
   }
 }
 

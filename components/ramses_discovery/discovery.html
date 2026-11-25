@@ -1212,6 +1212,22 @@
             }
           });
         }
+        if (tel.fault !== undefined) {
+          list.push({
+            domain: "binary_sensor",
+            type: "fault_alarm",
+            configKey: "fault_alarm",
+            icon: "⚠️",
+            name: `${friendly} Fault Warning`,
+            description: "Ventilation unit reports an active fault",
+            yaml: {
+              type: "fault_alarm",
+              name: `"Ventilation Fault"`,
+              ramses_address: `"${addr}"`,
+              device_id: subSlug
+            }
+          });
+        }
         if (tel.bypass_active !== undefined) {
           list.push({
             domain: "binary_sensor",

@@ -83,6 +83,9 @@ public:
   void set_probing_interval(uint32_t interval_ms) {
     this->probing_interval_ms_ = interval_ms;
   }
+  void set_default_hvac_scheme(ramses_esp::HvacScheme scheme) {
+    this->default_hvac_scheme_ = scheme;
+  }
   void set_html(const char *html) { this->html_ = html; }
   const char *get_html() const { return this->html_; }
   void set_html_gz(const uint8_t *html_gz, size_t len) {
@@ -126,6 +129,7 @@ protected:
   web_server_base::WebServerBase *web_server_base_{nullptr};
 #endif
   bool active_probing_{true};
+  ramses_esp::HvacScheme default_hvac_scheme_{ramses_esp::HvacScheme::AUTO};
   uint32_t probing_interval_ms_{30000};
   uint32_t last_probe_time_{0};
   uint32_t last_dump_time_{0};

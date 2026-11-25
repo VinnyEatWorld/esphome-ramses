@@ -107,6 +107,7 @@ ramses_discovery:
   ramses_esp_id: ramses_hub
   active_probing: true       # Proactively queries device parameters (default: true)
   probing_interval: 30s      # Probing frequency (default: 30s)
+  default_hvac_scheme: orcon # Use Orcon's 31D9 mode map for an MVS-15RH
 ```
 
 See [`esp32-c6-ramses-discovery.yaml`](esp32-c6-ramses-discovery.yaml) for a complete, ready-to-flash discovery configuration with WiFi captive portal and activity LED pulsing.
@@ -118,6 +119,7 @@ See [`esp32-c6-ramses-discovery.yaml`](esp32-c6-ramses-discovery.yaml) for a com
 | **`ramses_esp_id`** | **Required**, ID | — | ID of the `ramses_esp` physical transceiver hub. |
 | **`active_probing`** | Optional, Boolean | `true` | Enables active query frames to request zone names, schedules, and ventilation state. |
 | **`probing_interval`** | Optional, Time | `30s` | Interval between active probing sweeps. |
+| **`default_hvac_scheme`** | Optional, Enum | `auto` | Vendor mode map to use before OEM identification. Set to `orcon` for an Orcon MVS-15RH. Also supports `vasco`, `itho`, `zehnder`, and `hopper`. |
 | **`web_server_base_id`** | Optional, ID | auto | Explicit ID of the `web_server_base` component if multiple exist. |
 
 ---
@@ -147,21 +149,35 @@ climate:
 #### 2. Ventilation Fan (`fan.ramses_devices`)
 Controls Mechanical Ventilation with Heat Recovery (MVHR) units and extractor fans.
 - Supports vendor-specific protocol schemes: `orcon`, `vasco`, `itho`, `zehnder`, `hopper` (or `generic`).
-- Supports speed presets, timed boost modes, and automated remote pairing.
-- An optional `pairing_button` automates RF binding between the ESP32 and the ventilation unit.
+- Supports Away, Auto, Low, Medium, High, Boost, and Off presets where reported by the selected scheme.
+- The Orcon fan entity updates its confirmed preset and speed from received `31D9` status frames; a queued command alone is not treated as confirmed feedback.
+- Supports timed boost modes and explicit RF binding with a `pairing_button`.
 
 ```yaml
 fan:
   - platform: ramses_devices
     ramses_esp_id: ramses_hub
     name: "MVHR Ventilation Fan"
-    device_address: "32:155617"
+    device_address: "29:123456" # Replace with the MVS address found by discovery
     scheme: orcon
-    fake_remote_address: "29:123456" # Optional virtual remote address for RF pairing
     pairing_button:
       name: "Pair Ventilation Remote"
-    device_id: ramses_32_155617
+    device_id: ramses_29_123456
 ```
+
+Leave out `fake_remote_address` when creating a new virtual remote. The component derives a stable class-37 remote ID from the ESP32's low 18 MAC bits and stores the paired ID in NVS. Set `fake_remote_address` only when intentionally using a specific remote ID.
+
+##### Pairing an Orcon MVS-15RH
+
+1. Put the MVS-15RH into its learn window by disconnecting mains power for 5 seconds and reconnecting it. The learn window lasts about 3 minutes; see the [Orcon MVS-15R installation and user manual](https://downloads.orcon-ventiline.be/ORCON_Handleiding%20voor%20de%20installateur%20en%20gebruiker_%20MVS-15R.pdf).
+2. Press the ESPHome **Pair Ventilation Remote** button while the learn window is open. The gateway sends a `1FC9` offer once per second, for up to 180 seconds by default.
+3. On a valid fan `1FC9` Accept, the gateway queues the Confirm, saves the fan and remote addresses in NVS, and announces its Orcon DIS `10E0` identity. Confirm pairing from received protocol traffic; a successful compile or queued TX message alone does not prove the MVS accepted it.
+
+The virtual remote ID is a new identity; this does not clone the battery remote's identity. Do not configure a neighboring unit's address as `device_address`.
+
+##### Orcon fan modes and fault status
+
+For an Orcon MVS-15RH, `31D9` mode values map to Away (0), Low (1), Medium (2), High (3), Auto (4 or 5), Boost (6), and Off (7). Discovery otherwise has to infer the vendor scheme from RF traffic; set `default_hvac_scheme: orcon` when that identification is absent. A `31D9` fault flag is exposed by `fault_alarm`; it reports a generic unit fault and does not identify the failed part.
 
 #### 3. Water Heater (`water_heater.ramses_devices`)
 Controls Domestic Hot Water (DHW) cylinders linked to an Evohome controller.
@@ -207,6 +223,26 @@ Monitors temperatures, demands, ventilation telemetry, and OpenTherm boiler data
 | `spider_temperature` | Temperature reading from Itho Spider units | Spider Thermostat |
 | `fault_code` | Active equipment diagnostic error or fault code | Boiler / Controller |
 
+Example entities for a discovered Orcon fan and CO₂ sensor (replace the sample addresses with the addresses shown by your receiver):
+
+```yaml
+sensor:
+  - platform: ramses_devices
+    ramses_esp_id: ramses_hub
+    type: co2
+    name: "Ventilation CO2"
+    ramses_address: "32:123456"
+    device_id: ramses_29_123456
+
+binary_sensor:
+  - platform: ramses_devices
+    ramses_esp_id: ramses_hub
+    type: fault_alarm
+    name: "Ventilation Fault"
+    ramses_address: "29:123456"
+    device_id: ramses_29_123456
+```
+
 #### 5. Binary Sensors (`binary_sensor.ramses_devices`)
 Monitors binary equipment states and alerts.
 
@@ -214,7 +250,7 @@ Monitors binary equipment states and alerts.
 |---|---|
 | `filter_alarm` | True when the ventilation filter requires cleaning or replacement. |
 | `flame_active` | True when the boiler burner flame is active. |
-| `fault_alarm` | True if a general fault condition is present on the controller/appliance. |
+| `fault_alarm` | True if a general fault condition is reported. For Orcon ventilation, this also reads the fault flag in `31D9`. |
 | `window_open` | True when a radiator TRV detects an open window. |
 | `bypass_active` | True when the ventilation summer bypass is open. |
 | `battery_low` | True when a battery-powered device (TRV/sensor) indicates low battery. |

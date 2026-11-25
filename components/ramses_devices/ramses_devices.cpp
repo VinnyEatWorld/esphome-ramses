@@ -448,7 +448,7 @@ struct BinarySensorOpcodeHandler {
 };
 
 struct BinarySensorSpec {
-  BinarySensorOpcodeHandler handlers[4];
+  BinarySensorOpcodeHandler handlers[5];
   uint8_t handler_count;
 };
 
@@ -522,8 +522,15 @@ static const BinarySensorSpec BINARY_SENSOR_SPECS[] = {
        }},
       {0x0418, decode_system_fault_log},
       {0x0009, decode_system_fault_log},
-      {0x4401, decode_system_fault_log}},
-     4},
+      {0x4401, decode_system_fault_log},
+      {0x31D9,
+       [](const ramses_esp::RamsesMessage &msg, RamsesBinarySensor &bs) {
+         auto dec = ramses_esp::HvacFanInfoPayload::decode(msg.payload,
+                                                           msg.n_payload);
+         if (dec.has_value())
+           bs.publish_state(dec->has_fault);
+       }}},
+     5},
     // WINDOW_OPEN
     {{{0x12B0,
        [](const ramses_esp::RamsesMessage &msg, RamsesBinarySensor &bs) {

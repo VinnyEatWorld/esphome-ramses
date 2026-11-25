@@ -21,19 +21,20 @@
 namespace esphome {
 namespace ramses_devices {
 
-// Compact serialisation: upper 10 bits = dev_class, lower 22 bits = device id.
+// Compact NVS serialisation: upper 10 bits = dev_class; the lower 22 bits
+// reserve space for an ID, while RAMSES device IDs use only the lower 18 bits.
 // Zero = "not set / invalid" sentinel.
 static inline uint32_t addr_to_u32(const ramses_esp::RamsesAddress &a) {
   if (!a.is_valid)
     return 0;
-  return ((uint32_t)(a.dev_class & 0x3FF) << 22) | (a.id & 0x3FFFFF);
+  return ((uint32_t)(a.dev_class & 0x3FF) << 22) | (a.id & 0x03FFFF);
 }
 static inline ramses_esp::RamsesAddress u32_to_addr(uint32_t v) {
   if (v == 0)
     return ramses_esp::RamsesAddress{};
   return ramses_esp::RamsesAddress{
       .dev_class = static_cast<uint8_t>((v >> 22) & 0x3FF),
-      .id = v & 0x3FFFFF,
+      .id = v & 0x03FFFF,
       .is_valid = true,
   };
 }
@@ -57,7 +58,7 @@ public:
   fan::FanTraits get_traits() override;
   void control(const fan::FanCall &call) override;
 
-  void start_pairing(uint32_t timeout_ms = 30000);
+  void start_pairing(uint32_t timeout_ms = 180000);
   void stop_pairing();
   bool is_pairing() const { return this->pairing_active_; }
 
@@ -83,7 +84,7 @@ protected:
 
   bool pairing_active_{false};
   uint32_t pairing_start_time_{0};
-  uint32_t pairing_timeout_ms_{30000};
+  uint32_t pairing_timeout_ms_{180000};
   uint32_t last_offer_time_{0};
 
 #ifdef USE_ESP_IDF
@@ -113,7 +114,7 @@ public:
 
 protected:
   RamsesFan *fan_{nullptr};
-  uint32_t timeout_ms_{30000};
+  uint32_t timeout_ms_{180000};
 };
 
 } // namespace ramses_devices

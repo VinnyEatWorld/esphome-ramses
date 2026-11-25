@@ -572,6 +572,9 @@ RamsesNvsStorage::instantiate_from_json(const std::string &json_str,
           {"bypass_active", nullptr,
            ramses_devices::RamsesBinarySensorType::BYPASS_ACTIVE,
            "Bypass Active", 0, false},
+          {"fault_alarm", "fault",
+           ramses_devices::RamsesBinarySensorType::FAULT_ALARM,
+           "Ventilation Fault", RAMSES_FIELDS_BIN_PROBLEM, false},
       };
       for (const auto &desc : HVAC_BINARY_SENSORS) {
         instantiate_binary_sensor_desc(desc);

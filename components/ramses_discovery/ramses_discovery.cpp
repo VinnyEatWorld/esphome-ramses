@@ -768,6 +768,8 @@ void RamsesDiscoveryComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Discovered Devices: %d", (int)this->devices_.size());
 }
 
+static const char *hvac_scheme_name(ramses_esp::HvacScheme scheme);
+
 DiscoveredDevice &RamsesDiscoveryComponent::get_or_create_device(
     const ramses_esp::RamsesAddress &addr) {
   std::string key = addr.to_string();
@@ -805,8 +807,13 @@ DiscoveredDevice &RamsesDiscoveryComponent::get_or_create_device(
   case 29:
     dev.device_type = "hvac";
     dev.is_hvac = true;
-    dev.hvac_scheme = ramses_esp::HvacScheme::HOPPER;
-    dev.oem_name = "hopper";
+    if (this->default_hvac_scheme_ != ramses_esp::HvacScheme::AUTO) {
+      dev.hvac_scheme = this->default_hvac_scheme_;
+      dev.oem_name = hvac_scheme_name(this->default_hvac_scheme_);
+    } else {
+      dev.hvac_scheme = ramses_esp::HvacScheme::HOPPER;
+      dev.oem_name = "hopper";
+    }
     break;
   default:
     dev.device_type = "other";
@@ -833,6 +840,22 @@ void RamsesDiscoveryComponent::on_message(
 #endif
       uint16_t opcode = ((uint16_t)msg.opcode[0] << 8) | msg.opcode[1];
       dev.seen_opcodes.insert(opcode);
+
+      // Address class 32 is also used by battery remotes and CO2 sensors.
+      // Let actual telemetry distinguish those from ventilation units.
+      if (opcode == 0x1298 || opcode == 0x12A0 || opcode == 0x12C0) {
+        dev.device_type = "sensor";
+        dev.is_hvac = false;
+      } else if (opcode == 0x10E0 || opcode == 0x31D9 || opcode == 0x31DA) {
+        dev.device_type = "hvac";
+        dev.is_hvac = true;
+        if (dev.hvac_scheme == ramses_esp::HvacScheme::AUTO) {
+          dev.hvac_scheme = this->default_hvac_scheme_;
+          if (dev.hvac_scheme == ramses_esp::HvacScheme::AUTO)
+            dev.hvac_scheme = ramses_esp::HvacScheme::HOPPER;
+          dev.oem_name = hvac_scheme_name(dev.hvac_scheme);
+        }
+      }
 
       if (dev.device_type == "controller") {
         this->process_controller_packet(dev, msg, opcode);
@@ -1138,7 +1161,20 @@ void RamsesDiscoveryComponent::process_opentherm_packet(
 void RamsesDiscoveryComponent::process_sensor_packet(
     DiscoveredDevice &dev, const ramses_esp::RamsesMessage &msg,
     uint16_t opcode) {
-  if (opcode == 0x12C0) {
+  if (opcode == 0x1298) {
+    auto dec = ramses_esp::Co2SensorPayload::decode(msg.payload, msg.n_payload);
+    if (dec.has_value() && dec->is_valid)
+      dev.last_telemetry["co2"] = static_cast<float>(dec->co2_ppm);
+  } else if (opcode == 0x12A0) {
+    auto dec =
+        ramses_esp::AirQualityPayload::decode(msg.payload, msg.n_payload);
+    if (dec.has_value()) {
+      if (dec->temperature.has_value())
+        dev.last_telemetry["indoor_temperature"] = *dec->temperature;
+      if (dec->humidity.has_value())
+        dev.last_telemetry["indoor_humidity"] = *dec->humidity;
+    }
+  } else if (opcode == 0x12C0) {
     auto dec = ramses_esp::OutdoorTemperaturePayload::decode(msg.payload,
                                                              msg.n_payload);
     if (dec.has_value() && dec->is_valid) {
@@ -1300,6 +1336,23 @@ static std::string get_device_title(const DiscoveredDevice &dev) {
   return "RAMSES Device " + addr_str;
 }
 
+static const char *hvac_scheme_name(ramses_esp::HvacScheme scheme) {
+  switch (scheme) {
+  case ramses_esp::HvacScheme::ORCON:
+    return "orcon";
+  case ramses_esp::HvacScheme::VASCO:
+    return "vasco";
+  case ramses_esp::HvacScheme::ITHO:
+    return "itho";
+  case ramses_esp::HvacScheme::ZEHNDER:
+    return "zehnder";
+  case ramses_esp::HvacScheme::HOPPER:
+    return "hopper";
+  default:
+    return "generic";
+  }
+}
+
 static bool device_has_entities(const DiscoveredDevice &dev) {
   if (dev.device_type == "controller") {
     return !dev.zones.empty() || dev.has_dhw;
@@ -1421,6 +1474,8 @@ std::string RamsesDiscoveryComponent::generate_device_yaml(
 
     if (dev.last_telemetry.count("filter_dirty"))
       emit_bin("filter_alarm", "Ventilation Filter Dirty Warning");
+    if (dev.last_telemetry.count("fault"))
+      emit_bin("fault_alarm", "Ventilation Fault Warning");
     if (dev.last_telemetry.count("bypass_active"))
       emit_bin("bypass_active", "Ventilation Bypass Active");
 
@@ -1963,6 +2018,8 @@ std::string RamsesDiscoveryComponent::generate_yaml() const {
     } else if (dev.is_hvac) {
       if (dev.last_telemetry.count("filter_dirty"))
         emit_bin("filter_alarm", "Ventilation Filter Dirty Warning");
+      if (dev.last_telemetry.count("fault"))
+        emit_bin("fault_alarm", "Ventilation Fault Warning");
       if (dev.last_telemetry.count("bypass_active"))
         emit_bin("bypass_active", "Ventilation Bypass Active");
     }

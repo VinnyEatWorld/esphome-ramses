@@ -5,6 +5,7 @@ from esphome.components import binary_sensor
 from .. import (
     CONF_DEVICE_ADDRESS,
     CONF_RAMSES_ESP_ID,
+    CONF_RAMSES_ADDRESS,
     RamsesEntityBase,
     ramses_devices_ns,
 )
@@ -42,6 +43,7 @@ CONFIG_SCHEMA = (
             cv.GenerateID(CONF_RAMSES_ESP_ID): cv.use_id(cg.Component),
             cv.Required(CONF_TYPE): cv.enum(BINARY_SENSOR_TYPES, lower=True),
             cv.Optional(CONF_DEVICE_ADDRESS): cv.string,
+            cv.Optional(CONF_RAMSES_ADDRESS): cv.string,
             cv.Optional(CONF_ZONE_INDEX): cv.int_range(min=0, max=15),
         }
     )
@@ -58,7 +60,8 @@ async def to_code(config):
     cg.add(var.set_parent(hub))
     cg.add(var.set_sensor_type(config[CONF_TYPE]))
 
-    if CONF_DEVICE_ADDRESS in config:
-        cg.add(var.set_device_address(config[CONF_DEVICE_ADDRESS]))
+    address = config.get(CONF_DEVICE_ADDRESS) or config.get(CONF_RAMSES_ADDRESS)
+    if address is not None:
+        cg.add(var.set_device_address(address))
     if CONF_ZONE_INDEX in config:
         cg.add(var.set_zone_index(config[CONF_ZONE_INDEX]))
