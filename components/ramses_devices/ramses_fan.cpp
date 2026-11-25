@@ -5,6 +5,8 @@
 
 #include "esphome/core/log.h"
 #include <algorithm>
+#include <array>
+#include <span>
 
 #ifdef USE_ESP_IDF
 #include "components/ramses_esp/ramses_esp.h"
@@ -53,10 +55,13 @@ ramses_esp::RamsesAddress RamsesFan::derive_remote_from_chip_id() const {
 void RamsesFan::load_preferences() {
 #ifdef USE_ESP_IDF
   // Hash is derived from the entity name so each fan instance has its own slot
-  uint32_t hash_dev =
-      fnv1_hash(std::string("ramses_fan_dev_") + this->get_name());
-  uint32_t hash_rem =
-      fnv1_hash(std::string("ramses_fan_rem_") + this->get_name());
+  std::array<char, esphome::ENTITY_NAME_BUF_SIZE> name_buffer{};
+  const std::string entity_name =
+      this->get_name_to(std::span<char, esphome::ENTITY_NAME_BUF_SIZE>(
+                            name_buffer))
+          .str();
+  uint32_t hash_dev = fnv1_hash(std::string("ramses_fan_dev_") + entity_name);
+  uint32_t hash_rem = fnv1_hash(std::string("ramses_fan_rem_") + entity_name);
   this->pref_device_addr_ =
       global_preferences->make_preference<uint32_t>(hash_dev, true);
   this->pref_remote_addr_ =
@@ -299,7 +304,7 @@ void RamsesFan::handle_message(const ramses_esp::RamsesMessage &msg) {
   // Respond to the FAN's 10E0 query as an Orcon DIS virtual remote.
   if (this->scheme_ == ramses_esp::HvacScheme::ORCON && opcode == 0x10E0 &&
       msg.type == ramses_esp::RAMSES_MSG_RQ &&
-      (msg.fields & ramses_esp::RAMSES_F_ADDR1)) {
+      (msg.fields & RAMSES_F_ADDR1)) {
     auto target = ramses_esp::RamsesAddress::from_bytes(msg.addr[1]);
     auto sender = this->get_effective_sender_address();
     if (target == sender && this->parent_ != nullptr) {
