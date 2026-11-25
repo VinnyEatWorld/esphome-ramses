@@ -116,11 +116,15 @@ web_server:
   port: 80
 
 # Physical CC1101 pinout (pre-configured for Elecram ESP32-C6)
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
+  mosi_pin: GPIO7
+  miso_pin: GPIO2
+
 ramses_esp:
   id: ramses_hub
-  sck_pin: GPIO6
-  miso_pin: GPIO2
-  mosi_pin: GPIO7
+  spi_id: ramses_spi
   cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14
@@ -213,11 +217,15 @@ wifi:
   ssid: "YOUR_WIFI_SSID"
   password: "YOUR_WIFI_PASSWORD"
 
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
+  mosi_pin: GPIO7
+  miso_pin: GPIO2
+
 ramses_esp:
   id: ramses_hub
-  sck_pin: GPIO6
-  miso_pin: GPIO2
-  mosi_pin: GPIO7
+  spi_id: ramses_spi
   cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14

@@ -23,8 +23,10 @@ void RamsesESPComponent::setup() {
   this->rx_msg_queue_ = xQueueCreate(16, sizeof(RamsesMessage));
   this->tx_msg_queue_ = xQueueCreate(8, sizeof(RamsesMessage));
 
-  if (!this->cc1101_.init(SPI2_HOST, this->sck_pin_, this->mosi_pin_,
-                          this->miso_pin_, this->cs_pin_)) {
+  // Set up the ESPHome SPI device before touching the CC1101. This reuses the
+  // configured bus and lets other devices (such as the M5Stack display) share it.
+  this->spi_setup();
+  if (!this->cc1101_.init(this)) {
     ESP_LOGE(TAG, "Failed to initialize CC1101 transceiver!");
     this->mark_failed();
     return;
@@ -85,7 +87,12 @@ void RamsesESPComponent::resume() {
   if (!this->paused_)
     return;
   ESP_LOGD(TAG, "Resuming RAMSES Radio reception...");
-  this->cc1101_.apply_ramses_config();
+  if (!this->cc1101_.apply_ramses_config()) {
+    ESP_LOGE(TAG, "Unable to resume CC1101 RX; radio remains paused");
+    this->mark_failed();
+    xSemaphoreGive(this->radio_mutex_);
+    return;
+  }
   this->frame_handler_.rx_enable();
   this->paused_ = false;
   xSemaphoreGive(this->radio_mutex_);
@@ -251,10 +258,22 @@ void RamsesESPComponent::process_tx_queue() {
                tx_msg.to_hgi80().c_str());
 
       this->frame_handler_.rx_disable();
-      this->cc1101_.enter_idle_mode();
+      if (!this->cc1101_.enter_idle_mode()) {
+        this->frame_handler_.rx_enable();
+        xSemaphoreGive(this->radio_mutex_);
+        return;
+      }
 
       std::vector<uint8_t> raw_frame = tx_msg.to_raw_frame();
-      this->cc1101_.enter_tx_mode();
+      if (!this->cc1101_.enter_tx_mode()) {
+        if (!this->cc1101_.apply_ramses_config()) {
+          ESP_LOGE(TAG, "Unable to restore CC1101 RX after TX start failure");
+          this->mark_failed();
+        }
+        this->frame_handler_.rx_enable();
+        xSemaphoreGive(this->radio_mutex_);
+        return;
+      }
 
       size_t sent = 0;
       uint32_t start_ms = millis();
@@ -269,7 +288,10 @@ void RamsesESPComponent::process_tx_queue() {
       // Wait for transmission completion
       vTaskDelay(pdMS_TO_TICKS(15));
 
-      this->cc1101_.apply_ramses_config();
+      if (!this->cc1101_.apply_ramses_config()) {
+        ESP_LOGE(TAG, "Unable to restore CC1101 RX after TX");
+        this->mark_failed();
+      }
       this->frame_handler_.rx_enable();
 
       xSemaphoreGive(this->radio_mutex_);
@@ -279,10 +301,7 @@ void RamsesESPComponent::process_tx_queue() {
 
 void RamsesESPComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "RAMSES ESP Transceiver & Gateway:");
-  ESP_LOGCONFIG(TAG, "  SCK Pin: GPIO%d", this->sck_pin_);
-  ESP_LOGCONFIG(TAG, "  MOSI Pin: GPIO%d", this->mosi_pin_);
-  ESP_LOGCONFIG(TAG, "  MISO Pin: GPIO%d", this->miso_pin_);
-  ESP_LOGCONFIG(TAG, "  CS Pin: GPIO%d", this->cs_pin_);
+  ESP_LOGCONFIG(TAG, "  CC1101 SPI: ESPHome shared bus, mode 0, MSB first, 1 MHz");
   ESP_LOGCONFIG(TAG, "  GDO0 Pin (CC1101 TX): GPIO%d", this->gdo0_pin_);
   if (this->gdo2_pin_ != GPIO_NUM_NC) {
     ESP_LOGCONFIG(TAG, "  GDO2 Pin (CC1101 RX): GPIO%d", this->gdo2_pin_);

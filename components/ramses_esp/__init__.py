@@ -8,12 +8,13 @@ from esphome.const import (
 )
 
 from esphome import automation, pins
+from esphome.components import spi
 
-DEPENDENCIES = ["esp32"]
+DEPENDENCIES = ["esp32", "spi"]
 AUTO_LOAD = ["network"]
 
 ramses_esp_ns = cg.esphome_ns.namespace("ramses_esp")
-RamsesESPComponent = ramses_esp_ns.class_("RamsesESPComponent", cg.Component)
+RamsesESPComponent = ramses_esp_ns.class_("RamsesESPComponent", cg.Component, spi.SPIDevice)
 
 # Actions
 SendHgi80Action = ramses_esp_ns.class_("SendHgi80Action", automation.Action)
@@ -23,10 +24,6 @@ RamsesMessageTrigger = ramses_esp_ns.class_(
     "RamsesMessageTrigger", automation.Trigger.template(cg.std_string)
 )
 
-CONF_CS_PIN = "cs_pin"
-CONF_SCK_PIN = "sck_pin"
-CONF_MOSI_PIN = "mosi_pin"
-CONF_MISO_PIN = "miso_pin"
 CONF_GDO0_PIN = "gdo0_pin"
 CONF_GDO2_PIN = "gdo2_pin"
 CONF_UART_NUM = "uart_num"
@@ -35,10 +32,6 @@ CONF_COMMAND = "command"
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(RamsesESPComponent),
-        cv.Required(CONF_CS_PIN): pins.gpio_output_pin_schema,
-        cv.Required(CONF_SCK_PIN): pins.gpio_output_pin_schema,
-        cv.Required(CONF_MOSI_PIN): pins.gpio_output_pin_schema,
-        cv.Required(CONF_MISO_PIN): pins.gpio_input_pin_schema,
         cv.Required(CONF_GDO0_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_GDO2_PIN): pins.gpio_input_pin_schema,
         cv.Optional(CONF_UART_NUM, default=1): cv.int_range(min=0, max=2),
@@ -49,24 +42,17 @@ CONFIG_SCHEMA = cv.Schema(
             }
         ),
     }
-).extend(cv.COMPONENT_SCHEMA)
+).extend(spi.spi_device_schema(cs_pin_required=True)).extend(cv.COMPONENT_SCHEMA)
+
+FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
+    "ramses_esp", require_mosi=True, require_miso=True
+)
 
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-
-    cs = await cg.gpio_pin_expression(config[CONF_CS_PIN])
-    cg.add(var.set_cs_pin(cs))
-
-    sck = await cg.gpio_pin_expression(config[CONF_SCK_PIN])
-    cg.add(var.set_sck_pin(sck))
-
-    mosi = await cg.gpio_pin_expression(config[CONF_MOSI_PIN])
-    cg.add(var.set_mosi_pin(mosi))
-
-    miso = await cg.gpio_pin_expression(config[CONF_MISO_PIN])
-    cg.add(var.set_miso_pin(miso))
+    await spi.register_spi_device(var, config)
 
     gdo0 = await cg.gpio_pin_expression(config[CONF_GDO0_PIN])
     cg.add(var.set_gdo0_pin(gdo0))

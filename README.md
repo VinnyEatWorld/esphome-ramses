@@ -90,12 +90,16 @@ esp32:
 web_server:
   port: 80
 
-ramses_esp:
-  id: ramses_hub
-  cs_pin: GPIO18
-  sck_pin: GPIO6
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
   mosi_pin: GPIO7
   miso_pin: GPIO2
+
+ramses_esp:
+  id: ramses_hub
+  spi_id: ramses_spi
+  cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14
 
@@ -223,12 +227,16 @@ external_components:
   - source: github://wlcrs/esphome-ramses
     components: [ ramses_esp, ramses_devices ]
 
-ramses_esp:
-  id: ramses_hub
-  cs_pin: GPIO18
-  sck_pin: GPIO6
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
   mosi_pin: GPIO7
   miso_pin: GPIO2
+
+ramses_esp:
+  id: ramses_hub
+  spi_id: ramses_spi
+  cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14
 
@@ -335,12 +343,16 @@ cc1101:
   packet_mode: true
   crc_enable: true
 
-ramses_esp:
-  id: ramses_hub
-  cs_pin: GPIO18
-  sck_pin: GPIO6
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
   mosi_pin: GPIO7
   miso_pin: GPIO2
+
+ramses_esp:
+  id: ramses_hub
+  spi_id: ramses_spi
+  cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14
 
@@ -377,12 +389,16 @@ external_components:
   - source: github://wlcrs/esphome-ramses
     components: [ ramses_esp ]
 
-ramses_esp:
-  id: ramses_hub
-  cs_pin: GPIO18
-  sck_pin: GPIO6
+spi:
+  id: ramses_spi
+  clk_pin: GPIO6
   mosi_pin: GPIO7
   miso_pin: GPIO2
+
+ramses_esp:
+  id: ramses_hub
+  spi_id: ramses_spi
+  cs_pin: GPIO18
   gdo0_pin: GPIO15
   gdo2_pin: GPIO14
   port: 6638 # TCP port for HGI80 stream server
@@ -411,10 +427,8 @@ See [`esp32-c6-ramses-mqtt.yaml`](esp32-c6-ramses-mqtt.yaml) for a complete MQTT
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| **`cs_pin`** | **Required**, Pin | — | SPI Chip Select pin for CC1101. |
-| **`sck_pin`** | **Required**, Pin | — | SPI Clock pin. |
-| **`mosi_pin`** | **Required**, Pin | — | SPI MOSI pin. |
-| **`miso_pin`** | **Required**, Pin | — | SPI MISO pin. |
+| **`spi_id`** | Optional, ID | First configured SPI bus | ESPHome SPI bus used by the CC1101; set explicitly when the bus is shared. |
+| **`cs_pin`** | **Required**, Pin | — | SPI chip-select pin for the CC1101. Configure SCK/MOSI/MISO on the top-level `spi:` bus. |
 | **`gdo0_pin`** | **Required**, Pin | — | CC1101 GDO0 pin for packet TX. |
 | **`gdo2_pin`** | **Required**, Pin | — | CC1101 GDO2 pin connected to ESP32 UART RX for continuous bitstream reception. |
 | **`uart_num`** | Optional, Integer | `1` | ESP32 hardware UART peripheral number (0–2). |

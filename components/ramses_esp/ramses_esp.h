@@ -3,6 +3,7 @@
 #include "cc1101_driver.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/components/spi/spi.h"
 #include "esphome/core/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -16,22 +17,17 @@
 namespace esphome {
 namespace ramses_esp {
 
-class RamsesESPComponent : public Component {
+using RamsesSPIDevice = spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST,
+                                        spi::CLOCK_POLARITY_LOW,
+                                        spi::CLOCK_PHASE_LEADING,
+                                        spi::DATA_RATE_1MHZ>;
+
+class RamsesESPComponent : public Component,
+                           public RamsesSPIDevice,
+                           public CC1101SPITransport {
 public:
   RamsesESPComponent() = default;
 
-  void set_sck_pin(InternalGPIOPin *pin) {
-    this->sck_pin_ = static_cast<gpio_num_t>(pin->get_pin());
-  }
-  void set_mosi_pin(InternalGPIOPin *pin) {
-    this->mosi_pin_ = static_cast<gpio_num_t>(pin->get_pin());
-  }
-  void set_miso_pin(InternalGPIOPin *pin) {
-    this->miso_pin_ = static_cast<gpio_num_t>(pin->get_pin());
-  }
-  void set_cs_pin(InternalGPIOPin *pin) {
-    this->cs_pin_ = static_cast<gpio_num_t>(pin->get_pin());
-  }
   void set_gdo0_pin(InternalGPIOPin *pin) {
     this->gdo0_pin_ = static_cast<gpio_num_t>(pin->get_pin());
   }
@@ -42,6 +38,12 @@ public:
     this->uart_num_ = static_cast<uart_port_t>(uart_num);
   }
   void set_port(uint16_t port) { this->port_ = port; }
+
+  void cc1101_select() override { this->enable(); }
+  void cc1101_deselect() override { this->disable(); }
+  void cc1101_transfer(const uint8_t *tx, uint8_t *rx, size_t len) override {
+    this->delegate_->transfer(tx, rx, len);
+  }
 
   void
   add_on_message_callback(std::function<void(const std::string &)> callback) {
@@ -78,10 +80,6 @@ protected:
   static void radio_task_trampoline(void *arg);
   void radio_task();
 
-  gpio_num_t sck_pin_{GPIO_NUM_NC};
-  gpio_num_t mosi_pin_{GPIO_NUM_NC};
-  gpio_num_t miso_pin_{GPIO_NUM_NC};
-  gpio_num_t cs_pin_{GPIO_NUM_NC};
   gpio_num_t gdo0_pin_{GPIO_NUM_NC};
   gpio_num_t gdo2_pin_{GPIO_NUM_NC};
   uart_port_t uart_num_{UART_NUM_1};

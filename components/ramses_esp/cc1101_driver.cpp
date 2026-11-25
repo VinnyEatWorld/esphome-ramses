@@ -1,10 +1,12 @@
 #include "cc1101_driver.h"
 #include "esp_rom_sys.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include <cmath>
 #include <cstring>
 
 static const char *TAG = "ramses_esp.cc1101";
+static constexpr uint32_t CC1101_STATE_TIMEOUT_MS = 100;
 
 #define delayMicroseconds(us) esp_rom_delay_us(us)
 
@@ -63,51 +65,16 @@ static const uint8_t CC_RAMSES_CFG[CC_PARAM_MAX] = {
 
 static const uint8_t CC_DEFAULT_PA[CC_PA_MAX] = {0xC3, 0, 0, 0, 0, 0, 0, 0};
 
-bool CC1101Driver::init(spi_host_device_t host, gpio_num_t sck, gpio_num_t mosi,
-                        gpio_num_t miso, gpio_num_t cs) {
-  this->host_ = host;
-  this->sck_pin_ = sck;
-  this->mosi_pin_ = mosi;
-  this->miso_pin_ = miso;
-  this->cs_pin_ = cs;
+bool CC1101Driver::init(CC1101SPITransport *transport) {
+  if (transport == nullptr) {
+    ESP_LOGE(TAG, "ESPHome SPI transport is not available");
+    return false;
+  }
+  this->transport_ = transport;
 
+  // Reset through the ESPHome-owned SPI device. The shared SPI bus and CS
+  // routing stay under ESPHome; this driver never initializes SPI2 itself.
   this->spi_reset();
-
-  // spi_bus_config_t buscfg = {};
-  // buscfg.mosi_io_num = this->mosi_pin_;
-  // buscfg.miso_io_num = this->miso_pin_;
-  // buscfg.sclk_io_num = this->sck_pin_;
-  // buscfg.quadwp_io_num = -1;
-  // buscfg.quadhd_io_num = -1;
-  // buscfg.max_transfer_sz = 64;
-  spi_bus_config_t buscfg = {
-      .mosi_io_num = this->mosi_pin_,
-      .miso_io_num = this->miso_pin_,
-      .sclk_io_num = this->sck_pin_,
-      .quadwp_io_num = -1,
-      .quadhd_io_num = -1,
-      .max_transfer_sz = 64,
-  };
-  esp_err_t ret = spi_bus_initialize(this->host_, &buscfg, SPI_DMA_CH_AUTO);
-  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-    ESP_LOGE(TAG, "spi_bus_initialize failed: %d", ret);
-    return false;
-  }
-
-  spi_device_interface_config_t devcfg = {
-      .mode = 0,
-      .clock_speed_hz = 10000000, // 10 MHz
-      .spics_io_num = this->cs_pin_,
-      .flags = SPI_DEVICE_NO_DUMMY,
-      .queue_size = 7,
-  };
-
-  ret = spi_bus_add_device(this->host_, &devcfg, &this->spi_handle_);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "spi_bus_add_device failed: %d", ret);
-    return false;
-  }
-
   this->strobe(CC_SRES);
   delayMicroseconds(500);
 
@@ -122,43 +89,36 @@ bool CC1101Driver::init(spi_host_device_t host, gpio_num_t sck, gpio_num_t mosi,
              version);
   }
 
-  this->apply_ramses_config();
-  return true;
+  return this->apply_ramses_config();
 }
 
 void CC1101Driver::spi_reset() {
-  gpio_reset_pin(this->cs_pin_);
-  gpio_set_direction(this->cs_pin_, GPIO_MODE_OUTPUT);
-  gpio_set_level(this->cs_pin_, 1);
+  this->transport_->cc1101_deselect();
   delayMicroseconds(1);
-  gpio_set_level(this->cs_pin_, 0);
+  this->transport_->cc1101_select();
   delayMicroseconds(10);
-  gpio_set_level(this->cs_pin_, 1);
+  this->transport_->cc1101_deselect();
   delayMicroseconds(41);
 }
 
-bool CC1101Driver::spi_write_bytes(uint8_t *status, const uint8_t *data,
+bool CC1101Driver::spi_write_bytes(uint8_t *rx_data, const uint8_t *data,
                                    size_t len) {
-  if (len == 0 || this->spi_handle_ == nullptr)
+  if (len == 0 || this->transport_ == nullptr || rx_data == nullptr)
     return false;
-  spi_transaction_t t = {
-      .length = len * 8,
-      .tx_buffer = data,
-      .rx_buffer = status,
-  };
-  return spi_device_transmit(this->spi_handle_, &t) == ESP_OK;
+  this->transport_->cc1101_select();
+  this->transport_->cc1101_transfer(data, rx_data, len);
+  this->transport_->cc1101_deselect();
+  return true;
 }
 
 bool CC1101Driver::spi_read_bytes(uint8_t *rx_data, const uint8_t *tx_data,
                                   size_t len) {
-  if (len == 0 || this->spi_handle_ == nullptr)
+  if (len == 0 || this->transport_ == nullptr || rx_data == nullptr)
     return false;
-  spi_transaction_t t = {
-      .length = len * 8,
-      .tx_buffer = tx_data,
-      .rx_buffer = rx_data,
-  };
-  return spi_device_transmit(this->spi_handle_, &t) == ESP_OK;
+  this->transport_->cc1101_select();
+  this->transport_->cc1101_transfer(tx_data, rx_data, len);
+  this->transport_->cc1101_deselect();
+  return true;
 }
 
 uint8_t CC1101Driver::read_reg(uint8_t addr) {
@@ -170,14 +130,14 @@ uint8_t CC1101Driver::read_reg(uint8_t addr) {
 
 uint8_t CC1101Driver::write_reg(uint8_t addr, uint8_t val) {
   uint8_t tx[2] = {addr, val};
-  uint8_t status = 0;
-  this->spi_write_bytes(&status, tx, 2);
-  return status;
+  uint8_t rx[2] = {0, 0};
+  this->spi_write_bytes(rx, tx, sizeof(tx));
+  return rx[0];
 }
 
 uint8_t CC1101Driver::strobe(uint8_t cmd) {
   uint8_t status = 0;
-  this->spi_write_bytes(&status, &cmd, 1);
+  this->spi_write_bytes(&status, &cmd, sizeof(cmd));
   return status;
 }
 
@@ -192,34 +152,59 @@ void CC1101Driver::write_fifo_burst(const uint8_t *data, size_t len) {
   std::vector<uint8_t> buf(len + 1);
   buf[0] = CC_FIFO | CC_BURST;
   memcpy(buf.data() + 1, data, len);
-  uint8_t status = 0;
-  this->spi_write_bytes(&status, buf.data(), buf.size());
+  std::vector<uint8_t> rx(buf.size(), 0);
+  this->spi_write_bytes(rx.data(), buf.data(), buf.size());
 }
 
-void CC1101Driver::enter_idle_mode() {
-  while (CC_STATE(this->strobe(CC_SIDLE)) != CC_STATE_IDLE) {
-    delayMicroseconds(10);
+bool CC1101Driver::enter_idle_mode() {
+  this->strobe(CC_SIDLE);
+  const uint32_t started = millis();
+  while ((millis() - started) < CC1101_STATE_TIMEOUT_MS) {
+    if (CC_STATE(this->strobe(CC_SNOP)) == CC_STATE_IDLE)
+      return true;
+    delay(1);
   }
+  ESP_LOGE(TAG, "CC1101 did not enter IDLE within %u ms",
+           static_cast<unsigned>(CC1101_STATE_TIMEOUT_MS));
+  return false;
 }
 
-void CC1101Driver::enter_rx_mode() {
-  this->enter_idle_mode();
+bool CC1101Driver::enter_rx_mode() {
+  if (!this->enter_idle_mode())
+    return false;
   this->write_reg(CC_IOCFG0, 0x2E);   // GDO0 not needed / async
   this->write_reg(CC_PKTCTRL0, 0x32); // Asynchronous, infinite packet
   this->strobe(CC_SFRX);
-  while (CC_STATE(this->strobe(CC_SRX)) != CC_STATE_RX) {
-    delayMicroseconds(10);
+  this->strobe(CC_SRX);
+
+  const uint32_t started = millis();
+  while ((millis() - started) < CC1101_STATE_TIMEOUT_MS) {
+    if (CC_STATE(this->strobe(CC_SNOP)) == CC_STATE_RX)
+      return true;
+    delay(1);
   }
+  ESP_LOGE(TAG, "CC1101 did not enter RX within %u ms",
+           static_cast<unsigned>(CC1101_STATE_TIMEOUT_MS));
+  return false;
 }
 
-void CC1101Driver::enter_tx_mode() {
-  this->enter_idle_mode();
+bool CC1101Driver::enter_tx_mode() {
+  if (!this->enter_idle_mode())
+    return false;
   this->write_reg(CC_PKTCTRL0, 0x02); // Fifo mode, infinite packet
   this->write_reg(CC_IOCFG0, 0x03);   // Falling edge, TX Fifo low
   this->strobe(CC_SFTX);
-  while (CC_STATE(this->strobe(CC_STX)) != CC_STATE_TX) {
-    delayMicroseconds(10);
+  this->strobe(CC_STX);
+
+  const uint32_t started = millis();
+  while ((millis() - started) < CC1101_STATE_TIMEOUT_MS) {
+    if (CC_STATE(this->strobe(CC_SNOP)) == CC_STATE_TX)
+      return true;
+    delay(1);
   }
+  ESP_LOGE(TAG, "CC1101 did not enter TX within %u ms",
+           static_cast<unsigned>(CC1101_STATE_TIMEOUT_MS));
+  return false;
 }
 
 void CC1101Driver::fifo_end() {
@@ -232,8 +217,9 @@ uint8_t CC1101Driver::read_rssi() {
   return static_cast<uint8_t>(-rssi);
 }
 
-void CC1101Driver::apply_ramses_config() {
-  this->enter_idle_mode();
+bool CC1101Driver::apply_ramses_config() {
+  if (!this->enter_idle_mode())
+    return false;
   for (uint8_t i = 0; i < CC_PARAM_MAX; i++) {
     this->write_reg(i, CC_RAMSES_CFG[i]);
   }
@@ -242,12 +228,15 @@ void CC1101Driver::apply_ramses_config() {
   for (uint8_t i = 0; i < CC_PA_MAX; i++) {
     this->write_reg(CC_PATABLE, CC_DEFAULT_PA[i]);
   }
-  this->enter_rx_mode();
+  if (!this->enter_rx_mode())
+    return false;
   ESP_LOGI(TAG, "CC1101 configured for RAMSES II RX (868.3 MHz)");
+  return true;
 }
 
 void CC1101Driver::apply_custom_tx_config(const CustomTxConfig &cfg) {
-  this->enter_idle_mode();
+  if (!this->enter_idle_mode())
+    return;
 
   // 1. Calculate frequency registers: F_carrier = (F_xosc / 2^16) * FREQ
   // FREQ = freq_hz * 65536 / 26000000

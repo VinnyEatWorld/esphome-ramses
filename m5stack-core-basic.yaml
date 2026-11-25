@@ -1,0 +1,32 @@
+# Minimal M5Stack Core Basic + M146 radio bring-up.
+# SW1-2: CSN -> GPIO15; SW2-1: GDO2 -> GPIO35; SW2-5: GDO0 -> GPIO13.
+# GPIO15 is a classic ESP32 strapping pin; verify CSN level during reset.
+esphome:
+  name: ramses-m5stack-core-basic
+
+esp32:
+  board: m5stack-core-esp32
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://VinnyEatWorld/esphome-ramses@feature/cc1101-esphome-spi-port
+    components: [ramses_esp]
+
+logger:
+  level: DEBUG
+
+spi:
+  id: shared_spi
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+ramses_esp:
+  id: ramses_hub
+  spi_id: shared_spi
+  cs_pin: GPIO15
+  gdo0_pin: GPIO13
+  gdo2_pin: GPIO35
+  uart_num: 1
+  port: 6638
