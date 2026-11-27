@@ -8,6 +8,7 @@ ramses_devices_ns = cg.esphome_ns.namespace("ramses_devices")
 ramses_esp_ns = cg.esphome_ns.namespace("ramses_esp")
 
 RamsesESPComponent = ramses_esp_ns.class_("RamsesESPComponent", cg.Component)
+RamsesEntityBase = ramses_devices_ns.class_("RamsesEntityBase")
 
 CONF_RAMSES_ESP_ID = "ramses_esp_id"
 CONF_DEVICE_ADDRESS = "device_address"
