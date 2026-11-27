@@ -175,13 +175,13 @@ void RamsesFan::loop() {
         ESP_LOGI(TAG, "Queued 1FC9 Pairing Offer from Remote %s; waiting up to "
                       "%u s for Accept.",
                  sender.to_string().c_str(),
-                 PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
+                 static_cast<unsigned>(PAIRING_OFFER_RETRY_INTERVAL_MS / 1000));
       } else {
         ESP_LOGW(TAG,
                  "Could not queue 1FC9 Pairing Offer from Remote %s; retrying "
                  "in %u s.",
                  sender.to_string().c_str(),
-                 PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
+                 static_cast<unsigned>(PAIRING_OFFER_RETRY_INTERVAL_MS / 1000));
       }
     }
 #endif
@@ -202,7 +202,7 @@ void RamsesFan::start_pairing(uint32_t timeout_ms) {
            "Virtual remote pairing active for %u s; sending an offer now and "
            "retrying every %u s until Accept.",
            (unsigned int)(timeout_ms / 1000),
-           PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
+           static_cast<unsigned>(PAIRING_OFFER_RETRY_INTERVAL_MS / 1000));
   if (this->scheme_ == ramses_esp::HvacScheme::ORCON) {
     ESP_LOGI(TAG,
              "For an MVS-15RH, enter learn mode first: disconnect mains for "
