@@ -20,6 +20,7 @@ namespace esphome {
 namespace ramses_devices {
 
 static const char *const TAG = "ramses_fan";
+static constexpr uint32_t PAIRING_OFFER_RETRY_INTERVAL_MS = 5000;
 
 // ----------------------------------------------------------------
 // Chip-ID derived address
@@ -160,17 +161,28 @@ void RamsesFan::loop() {
     return;
   }
 
-  // Broadcast 1FC9 Offer every 1000 ms during pairing mode
-  if (now - this->last_offer_time_ > 1000) {
-    this->last_offer_time_ = now;
+  // Send an offer immediately, then wait for an Accept before retrying.
+  if (!this->pairing_offer_sent_ ||
+      now - this->last_offer_time_ >= PAIRING_OFFER_RETRY_INTERVAL_MS) {
 #ifdef USE_ESP_IDF
     if (this->parent_ != nullptr) {
       ramses_esp::RamsesAddress sender = this->get_effective_sender_address();
       ramses_esp::RamsesMessage offer =
           ramses_esp::BindingPayload::encode_offer(sender, this->scheme_);
-      ESP_LOGI(TAG, "Broadcasting 1FC9 Pairing Offer from Remote %s...",
-               sender.to_string().c_str());
-      this->parent_->send_message(offer);
+      this->last_offer_time_ = now;
+      this->pairing_offer_sent_ = true;
+      if (this->parent_->send_message(offer)) {
+        ESP_LOGI(TAG, "Queued 1FC9 Pairing Offer from Remote %s; waiting up to "
+                      "%u s for Accept.",
+                 sender.to_string().c_str(),
+                 PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
+      } else {
+        ESP_LOGW(TAG,
+                 "Could not queue 1FC9 Pairing Offer from Remote %s; retrying "
+                 "in %u s.",
+                 sender.to_string().c_str(),
+                 PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
+      }
     }
 #endif
   }
@@ -184,11 +196,13 @@ void RamsesFan::start_pairing(uint32_t timeout_ms) {
   this->pairing_start_time_ = millis();
   this->pairing_timeout_ms_ = timeout_ms;
   this->last_offer_time_ = 0;
+  this->pairing_offer_sent_ = false;
 
   ESP_LOGI(TAG,
-           "Virtual remote pairing active for %u s; offers are sent every "
-           "second.",
-           (unsigned int)(timeout_ms / 1000));
+           "Virtual remote pairing active for %u s; sending an offer now and "
+           "retrying every %u s until Accept.",
+           (unsigned int)(timeout_ms / 1000),
+           PAIRING_OFFER_RETRY_INTERVAL_MS / 1000);
   if (this->scheme_ == ramses_esp::HvacScheme::ORCON) {
     ESP_LOGI(TAG,
              "For an MVS-15RH, enter learn mode first: disconnect mains for "

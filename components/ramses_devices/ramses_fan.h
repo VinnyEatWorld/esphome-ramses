@@ -86,6 +86,7 @@ protected:
   uint32_t pairing_start_time_{0};
   uint32_t pairing_timeout_ms_{180000};
   uint32_t last_offer_time_{0};
+  bool pairing_offer_sent_{false};
 
 #ifdef USE_ESP_IDF
   ESPPreferenceObject pref_device_addr_;

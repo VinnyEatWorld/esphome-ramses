@@ -170,8 +170,8 @@ Leave out `fake_remote_address` when creating a new virtual remote. The componen
 ##### Pairing an Orcon MVS-15RH
 
 1. Put the MVS-15RH into its learn window by disconnecting mains power for 5 seconds and reconnecting it. The learn window lasts about 3 minutes; see the [Orcon MVS-15R installation and user manual](https://downloads.orcon-ventiline.be/ORCON_Handleiding%20voor%20de%20installateur%20en%20gebruiker_%20MVS-15R.pdf).
-2. Press the ESPHome **Pair Ventilation Remote** button while the learn window is open. The gateway sends a `1FC9` offer once per second, for up to 180 seconds by default.
-3. On a valid fan `1FC9` Accept, the gateway queues the Confirm, saves the fan and remote addresses in NVS, and announces its Orcon DIS `10E0` identity. Confirm pairing from received protocol traffic; a successful compile or queued TX message alone does not prove the MVS accepted it.
+2. Press the ESPHome **Pair Ventilation Remote** button while the learn window is open. The gateway sends one `1FC9` offer immediately, then waits up to 5 seconds for an Accept before retrying. Pairing stops after 180 seconds by default.
+3. The expected exchange is `1FC9` Offer (`I`), Accept (`W`) from the MVS, then Confirm (`I`) from the gateway. On a valid Accept, the gateway queues the Confirm, saves the fan and remote addresses in NVS, and announces its Orcon DIS `10E0` identity. Confirm pairing from received protocol traffic; a successful compile or queued TX message alone does not prove the MVS accepted it.
 
 The virtual remote ID is a new identity; this does not clone the battery remote's identity. Do not configure a neighboring unit's address as `device_address`.
 

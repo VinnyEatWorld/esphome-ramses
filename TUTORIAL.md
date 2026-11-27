@@ -321,14 +321,12 @@ fan:
 Flash the update to your ESP32. In Home Assistant, a new button called **`button.pair_ventilation_remote`** will appear alongside your fan.
 
 ### 2. Put the Ventilation Unit into Pairing Mode
-Ventilation units only accept new remotes when placed in "Bind" or "Pairing" mode:
-- **Power-cycle method (most common)**: Unplug the ventilation unit (or flip its circuit breaker) for 15 seconds, then plug it back in. Most units stay in pairing mode for the first **3 to 10 minutes** after boot.
-- **Button method**: Some units have a small pairing button on the main casing or behind the front cover. Hold it until an LED begins blinking or you hear a confirmation beep.
+Ventilation units only accept new remotes when placed in "Bind" or "Pairing" mode. Follow the procedure in the manual for your exact model. For an Orcon MVS-15RH, disconnect mains power for 5 seconds and reconnect it; its learn window lasts about 3 minutes.
 
 ### 3. Click the Pair Button
-1. In Home Assistant, go to your ESPHome device page and click **Press** on the **Pair Ventilation Remote** button.
-2. The ESP32 will transmit the special RAMSES binding sequence.
-3. The ventilation unit will acknowledge the pair (usually with a beep or a change in the LED pattern).
+1. In Home Assistant, click **Press** on the **Pair Ventilation Remote** button while the unit is in its learn window.
+2. The gateway sends one RAMSES `1FC9` Offer, waits up to 5 seconds for an Accept, then retries if needed. It stops after the configured pairing timeout (180 seconds by default).
+3. Look for a received `1FC9` Accept from the MVS and a `Pairing confirmed` log. A queued TX log alone does not confirm pairing.
 
 ### 4. Test Fan Speed Control
 Now test changing the fan speed in Home Assistant:
