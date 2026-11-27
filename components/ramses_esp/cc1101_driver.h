@@ -39,6 +39,8 @@ public:
 
   bool enter_idle_mode();
   bool enter_rx_mode();
+  bool prepare_tx_mode();
+  bool start_tx_mode();
   bool enter_tx_mode();
   void fifo_end();
   int8_t read_rssi();

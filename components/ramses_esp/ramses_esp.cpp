@@ -12,6 +12,9 @@
 #include <unistd.h>
 
 static const char *const TAG = "ramses_esp";
+static constexpr uint8_t RAMSES_MARCSTATE_IDLE = 0x01;
+static constexpr uint8_t RAMSES_MARCSTATE_MASK = 0x1F;
+static constexpr uint8_t RAMSES_MARCSTATE_TXFIFO_UNDERFLOW = 0x16;
 
 namespace esphome {
 namespace ramses_esp {
@@ -273,7 +276,26 @@ void RamsesESPComponent::process_tx_queue() {
       }
 
       std::vector<uint8_t> raw_frame = tx_msg.to_raw_frame();
-      if (!this->cc1101_.enter_tx_mode()) {
+      if (!this->cc1101_.prepare_tx_mode()) {
+        ESP_LOGE(TAG, "Unable to prepare CC1101 TX mode");
+        if (!this->cc1101_.apply_ramses_config()) {
+          ESP_LOGE(TAG, "Unable to restore CC1101 RX after TX preparation failure");
+          this->mark_failed();
+        }
+        this->frame_handler_.rx_enable();
+        xSemaphoreGive(this->radio_mutex_);
+        return;
+      }
+
+      // Preload most of the 64-byte TX FIFO before starting the carrier. This
+      // prevents an immediate FIFO underflow between STX and the first SPI
+      // write; longer frames are streamed while the radio drains the FIFO.
+      constexpr size_t TX_FIFO_PRELOAD_SIZE = 60;
+      const size_t preload = std::min(raw_frame.size(), TX_FIFO_PRELOAD_SIZE);
+      if (preload > 0)
+        this->cc1101_.write_fifo_burst(raw_frame.data(), preload);
+
+      if (!this->cc1101_.start_tx_mode()) {
         if (!this->cc1101_.apply_ramses_config()) {
           ESP_LOGE(TAG, "Unable to restore CC1101 RX after TX start failure");
           this->mark_failed();
@@ -283,18 +305,67 @@ void RamsesESPComponent::process_tx_queue() {
         return;
       }
 
-      size_t sent = 0;
-      uint32_t start_ms = millis();
-      while (sent < raw_frame.size() && (millis() - start_ms < 500)) {
-        uint8_t space = this->cc1101_.write_fifo(raw_frame[sent++]);
-        if (space < 2) {
-          vTaskDelay(pdMS_TO_TICKS(2));
+      constexpr uint32_t RAMSES_BIT_RATE_BPS = 38383;
+      constexpr uint32_t TX_AIRTIME_GUARD_MS = 5;
+      const uint32_t tx_start_ms = millis();
+      const uint32_t tx_airtime_ms = static_cast<uint32_t>(
+          (raw_frame.size() * 8ULL * 1000ULL + RAMSES_BIT_RATE_BPS - 1) /
+          RAMSES_BIT_RATE_BPS);
+      const uint32_t tx_timeout_ms = tx_airtime_ms + TX_AIRTIME_GUARD_MS;
+      size_t sent = preload;
+      bool tx_fifo_underflow = false;
+      while (sent < raw_frame.size() &&
+             (millis() - tx_start_ms < tx_timeout_ms)) {
+        const uint8_t status = this->cc1101_.strobe(CC_SNOP);
+        const uint8_t state = CC_STATE(status);
+        if (state == CC_STATE_TX_UNDERFLOW) {
+          tx_fifo_underflow = true;
+          break;
         }
+        if ((status & CC_FIFO_MASK) == 0) {
+          vTaskDelay(pdMS_TO_TICKS(1));
+          continue;
+        }
+        this->cc1101_.write_fifo(raw_frame[sent++]);
+      }
+
+      if (sent != raw_frame.size()) {
+        ESP_LOGE(TAG,
+                 "CC1101 TX FIFO underflow/incomplete frame: queued %u of %u bytes%s",
+                 static_cast<unsigned>(sent),
+                 static_cast<unsigned>(raw_frame.size()),
+                 tx_fifo_underflow ? " (radio entered underflow)" : "");
       }
 
       this->cc1101_.fifo_end();
-      // Wait for transmission completion
-      vTaskDelay(pdMS_TO_TICKS(15));
+      // Infinite-length FIFO mode has no hardware packet-end event. Wait for
+      // the calculated on-air duration (including a guard) before resetting
+      // the radio, then inspect the final state and FIFO count for diagnostics.
+      while (millis() - tx_start_ms < tx_timeout_ms)
+        vTaskDelay(pdMS_TO_TICKS(1));
+
+      const uint8_t final_txbytes = this->cc1101_.read_reg(CC_TXBYTES);
+      const uint8_t final_marcstate = this->cc1101_.read_reg(CC_MARCSTATE);
+      const uint8_t remaining = final_txbytes & 0x7F;
+      const uint8_t final_state = final_marcstate & RAMSES_MARCSTATE_MASK;
+      if (sent != raw_frame.size()) {
+        ESP_LOGE(TAG,
+                 "CC1101 TX incomplete: queued=%u/%u bytes, TXBYTES=%u, MARCSTATE=0x%02X",
+                 static_cast<unsigned>(sent),
+                 static_cast<unsigned>(raw_frame.size()), remaining,
+                 final_state);
+      } else if (remaining != 0 ||
+                 (final_state != RAMSES_MARCSTATE_IDLE &&
+                  final_state != RAMSES_MARCSTATE_TXFIFO_UNDERFLOW)) {
+        ESP_LOGW(TAG,
+                 "CC1101 TX completion not confirmed: TXBYTES=%u MARCSTATE=0x%02X",
+                 remaining, final_state);
+      } else {
+        ESP_LOGI(TAG,
+                 "CC1101 TX drain observed: queued=%u bytes, remaining=%u, MARCSTATE=0x%02X, underflow=%u",
+                 static_cast<unsigned>(sent), remaining, final_state,
+                 (final_txbytes & 0x80) != 0);
+      }
 
       if (!this->cc1101_.apply_ramses_config()) {
         ESP_LOGE(TAG, "Unable to restore CC1101 RX after TX");

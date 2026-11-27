@@ -204,12 +204,19 @@ bool CC1101Driver::enter_rx_mode() {
   return false;
 }
 
-bool CC1101Driver::enter_tx_mode() {
+bool CC1101Driver::prepare_tx_mode() {
   if (!this->enter_idle_mode())
     return false;
-  this->write_reg(CC_PKTCTRL0, 0x02); // Fifo mode, infinite packet
-  this->write_reg(CC_IOCFG0, 0x03);   // Falling edge, TX Fifo low
+
+  // RAMSES uses an explicitly encoded byte stream. Use the CC1101 FIFO path
+  // for TX (PKT_FORMAT=normal, infinite length), while RX remains asynchronous.
+  this->write_reg(CC_PKTCTRL0, 0x02);
+  this->write_reg(CC_IOCFG0, 0x03); // TX FIFO low threshold
   this->strobe(CC_SFTX);
+  return true;
+}
+
+bool CC1101Driver::start_tx_mode() {
   this->strobe(CC_STX);
 
   const uint32_t started = millis();
@@ -221,6 +228,10 @@ bool CC1101Driver::enter_tx_mode() {
   ESP_LOGE(TAG, "CC1101 did not enter TX within %u ms",
            static_cast<unsigned>(CC1101_STATE_TIMEOUT_MS));
   return false;
+}
+
+bool CC1101Driver::enter_tx_mode() {
+  return this->prepare_tx_mode() && this->start_tx_mode();
 }
 
 void CC1101Driver::fifo_end() {
